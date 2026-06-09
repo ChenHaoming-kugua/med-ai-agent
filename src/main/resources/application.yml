@@ -4,3 +4,10 @@ spring:
 
 server:
   port: 8080
+
+# MiniMax API (OpenAI 兼容格式)
+langchain4j:
+  openai:
+    api-key: ${MINIMAX_API_KEY:your-api-key-here}
+    base-url: https://api.minimaxi.com/v1
+    model-name: MiniMax-M3
