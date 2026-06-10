@@ -26,6 +26,10 @@ public class LangChain4jConfig {
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(modelName)
+                /** MiniMax M3 推理模型默认输出 `<think>`, 在 OpenAI-compatible API
+                 *  中以 strictJsonSchema 强制 JSON 输出, 可抑制模型输出 think。*/
+                .strictJsonSchema(true)
+                .responseFormat("json_object")
                 .timeout(Duration.ofSeconds(30))
                 .maxTokens(512)
                 .temperature(0.3)

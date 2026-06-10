@@ -4,7 +4,9 @@
       "WebSearch",
       "Bash(gh repo *)",
       "Bash(git clone *)",
-      "Bash(pnpm -v)"
+      "Bash(pnpm -v)",
+      "Bash(git *)",
+      "Bash(curl *)"
     ]
   }
 }

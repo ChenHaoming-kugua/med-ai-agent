@@ -1,13 +1,28 @@
 spring:
   application:
     name: med-ai-agent
+  datasource:
+    url: jdbc:oracle:thin:@172.16.100.87:1521/orcl_pd
+    username: MSFX
+    password: "msujdk#75Uxjf"
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 3
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1 FROM DUAL
 
 server:
   port: 8080
 
-# MiniMax API (OpenAI 兼容格式)
 langchain4j:
   openai:
-    api-key: ${MINIMAX_API_KEY:your-api-key-here}
+    api-key: ${MINIMAX_API_KEY:sk-cp-MleHLt6M_2aNQdMoFQoI6o4zTs4RISzlwhaVNU5NKHYbfPpv7xhtYcXdRfqTB4EMi3Rse_d0MeKonTZn89ahHdZIuxFXnBLAx-Sm-FH8hxUY6PhFby75Mws}
     base-url: https://api.minimaxi.com/v1
     model-name: MiniMax-M3
+
+wechat:
+  app-id: ${WECHAT_APP_ID:}
+  secret: ${WECHAT_APP_SECRET:}
