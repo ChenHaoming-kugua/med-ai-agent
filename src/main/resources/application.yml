@@ -13,6 +13,9 @@ spring:
       idle-timeout: 600000
       max-lifetime: 1800000
       connection-test-query: SELECT 1 FROM DUAL
+  jdbc:
+    template:
+      query-timeout: 10
 
 server:
   port: 8080

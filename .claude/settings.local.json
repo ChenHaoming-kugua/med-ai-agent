@@ -6,7 +6,26 @@
       "Bash(git clone *)",
       "Bash(pnpm -v)",
       "Bash(git *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(mvn compile *)",
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Read(//c/Program Files/JetBrains/**)",
+      "Read(//c/Users/haoming/.jdks/**)",
+      "Read(//c/Users/haoming/AppData/Local/Programs/**)",
+      "Bash(JAVA_HOME=\"C:/Users/haoming/.jdks/openjdk-26.0.1\" mvn compile)",
+      "Bash(JAVA_HOME=\"C:/Users/haoming/.jdks/openjdk-26.0.1\" mvn compile -Dfile.encoding=UTF-8)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist)",
+      "Read(//c/Users/haoming/.openclaw/**)",
+      "Read(//c/Users/haoming/.config/**)",
+      "Bash(pnpm install *)",
+      "Bash(taskkill *)",
+      "Bash(npx openclaw *)",
+      "Bash(JAVA_HOME=\"C:/Users/haoming/.jdks/openjdk-26.0.1\" mvn compile -Dfile.encoding=UTF-8 -q)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({'blocked':d.get\\('blocked'\\),'flowType':d.get\\('flowType'\\),'baseInfo':d.get\\('baseInfo'\\),'fails':d.get\\('fails'\\),'passes':d.get\\('passes'\\),'blockReason':d.get\\('blockReason'\\),'multipleCount':len\\(d.get\\('multipleDiagnoses',[]\\)\\),'checks':[\\(c['check'],c['pass'],c.get\\('detail',''\\)[:80]\\) for c in d.get\\('checks',[]\\)]},indent=2,ensure_ascii=False\\)\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f'  {c[\\\\\"check\\\\\"]}: {\\\\\"PASS\\\\\" if c[\\\\\"pass\\\\\"] else \\\\\"FAIL\\\\\"} | {c.get\\(\\\\\"detail\\\\\",\\\\\"\\\\\"\\)[:100]}'\\) for diag in d.get\\('multipleDiagnoses',[d]\\) for c in diag.get\\('checks',[]\\)]\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f'  {c[\\\\\"check\\\\\"]}: {\\\\\"PASS\\\\\" if c[\\\\\"pass\\\\\"] else \\\\\"FAIL\\\\\"} | {c.get\\(\\\\\"detail\\\\\",\\\\\"\\\\\"\\)[:100]}'\\) for c in d.get\\('checks',[]\\)]\")"
     ]
   }
 }

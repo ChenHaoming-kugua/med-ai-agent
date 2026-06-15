@@ -122,7 +122,7 @@ public class StatsService {
             int added = found.size() - before;
             noNewDays = (added == 0) ? noNewDays + 1 : 0;
             log.info("O2O day={}: +{} new, total={}", day, added, found.size());
-            if (noNewDays >= 3) { log.info("O2O 连续3天无新增,停止(已查{}天)", di+1); break; }
+            if (noNewDays >= 7) { log.info("O2O 连续7天无新增,停止(已查{}/{}天)", di+1, days.size()); break; }
         }
         return found.size();
     }
