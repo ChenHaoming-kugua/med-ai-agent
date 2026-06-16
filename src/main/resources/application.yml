@@ -15,7 +15,7 @@ spring:
       connection-test-query: SELECT 1 FROM DUAL
   jdbc:
     template:
-      query-timeout: 10
+      query-timeout: 60
 
 server:
   port: 8080

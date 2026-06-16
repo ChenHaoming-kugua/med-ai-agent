@@ -95,4 +95,64 @@ public class EcodeDiagnosticController {
             return Map.of("error", e.getClass().getName() + ": " + e.getMessage());
         }
     }
+
+    /** 按 request_log_id 诊断(单据号重复 / 平台返回错误) */
+    @GetMapping("/diagnose/by-request-log")
+    public Map<String, Object> diagnoseByRequestLog(@RequestParam String requestLogId) {
+        long t0 = System.currentTimeMillis();
+        try {
+            log.info("==> GET /api/ecode/diagnose/by-request-log requestLogId={}", requestLogId);
+            Map<String, Object> result = service.diagnoseByRequestLogId(requestLogId);
+            log.info("<== GET /api/ecode/diagnose/by-request-log requestLogId={} cost={}ms verdict={} attempts={}",
+                    requestLogId, System.currentTimeMillis() - t0,
+                    result.get("verdict"), result.get("attemptCount"));
+            return result;
+        } catch (Exception e) {
+            log.error("!!! diagnoseByRequestLog 异常 requestLogId={}", requestLogId, e);
+            return Map.of("error", e.getClass().getName() + ": " + e.getMessage(),
+                "requestLogId", requestLogId);
+        }
+    }
+
+    /** 按平台单据号 (REQUEST_ID) 诊断(单据号重复) */
+    @GetMapping("/diagnose/by-doc-no")
+    public Map<String, Object> diagnoseByDocNo(
+            @RequestParam String requestId,
+            @RequestParam(required = false) Long placepointid) {
+        long t0 = System.currentTimeMillis();
+        try {
+            log.info("==> GET /api/ecode/diagnose/by-doc-no requestId={} placepointid={}", requestId, placepointid);
+            Map<String, Object> result = service.diagnoseByDocNo(requestId, placepointid);
+            log.info("<== GET /api/ecode/diagnose/by-doc-no requestId={} placepointid={} cost={}ms verdict={} attempts={}",
+                    requestId, placepointid, System.currentTimeMillis() - t0,
+                    result.get("verdict"), result.get("attemptCount"));
+            return result;
+        } catch (Exception e) {
+            log.error("!!! diagnoseByDocNo 异常 requestId={} placepointid={}", requestId, placepointid, e);
+            return Map.of("error", e.getClass().getName() + ": " + e.getMessage(),
+                "requestId", requestId);
+        }
+    }
+
+    /** 按 placepointid + rsaid + rsadtlid 找最近一次同步日志 */
+    @GetMapping("/diagnose/by-rsaid")
+    public Map<String, Object> diagnoseByRsaid(
+            @RequestParam long placepointid,
+            @RequestParam long rsaid,
+            @RequestParam long rsadtlid) {
+        long t0 = System.currentTimeMillis();
+        try {
+            log.info("==> GET /api/ecode/diagnose/by-rsaid placepointid={} rsaid={} rsadtlid={}",
+                    placepointid, rsaid, rsadtlid);
+            Map<String, Object> result = service.diagnoseByRsaid(placepointid, rsaid, rsadtlid);
+            log.info("<== GET /api/ecode/diagnose/by-rsaid placepointid={} rsaid={} rsadtlid={} cost={}ms verdict={}",
+                    placepointid, rsaid, rsadtlid, System.currentTimeMillis() - t0, result.get("verdict"));
+            return result;
+        } catch (Exception e) {
+            log.error("!!! diagnoseByRsaid 异常 placepointid={} rsaid={} rsadtlid={}",
+                    placepointid, rsaid, rsadtlid, e);
+            return Map.of("error", e.getClass().getName() + ": " + e.getMessage(),
+                "placepointid", placepointid, "rsaid", rsaid, "rsadtlid", rsadtlid);
+        }
+    }
 }

@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 
 /**
@@ -796,6 +797,213 @@ public class EcodeDiagnosticService {
             return Map.of("check", "ALI_HEALTH_SYNC_REQUSET_LOG(同步请求日志)",
                 "pass", false, "detail", "查询异常: " + e.getMessage());
         }
+    }
+
+    /* ==================== 上传请求日志诊断(单据号重复 / 重试排查) ==================== */
+
+    /** 按 request_log_id 诊断(单据号重复、平台返回错误) */
+    public Map<String, Object> diagnoseByRequestLogId(String requestLogId) {
+        log.info("  [diagnoseByRequestLogId] requestLogId={}", requestLogId);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("requestLogId", requestLogId);
+
+        if (requestLogId == null || requestLogId.isBlank()) {
+            r.put("error", "requestLogId 不能为空");
+            return r;
+        }
+
+        return runRequestLogDiagnosis("request_log_id", requestLogId, null);
+    }
+
+    /** 按平台单据号 (REQUEST_ID) 诊断 */
+    public Map<String, Object> diagnoseByDocNo(String requestId, Long placepointid) {
+        log.info("  [diagnoseByDocNo] requestId={} placepointid={}", requestId, placepointid);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("requestId", requestId);
+        if (placepointid != null) r.put("placepointid", placepointid);
+
+        if (requestId == null || requestId.isBlank()) {
+            r.put("error", "requestId 不能为空");
+            return r;
+        }
+
+        // 单据号是平台分配,可能跨门店共用号段,可选地按门店过滤
+        if (placepointid != null && placepointid > 0) {
+            return runRequestLogDiagnosis("request_id", requestId, placepointid);
+        }
+        return runRequestLogDiagnosis("request_id", requestId, null);
+    }
+
+    /** 按 placepointid + rsaid + rsadtlid 找最近一次同步日志(GDYFSA_<rsaid><rsadtlid>) */
+    public Map<String, Object> diagnoseByRsaid(long placepointid, long rsaid, long rsadtlid) {
+        log.info("  [diagnoseByRsaid] placepointid={} rsaid={} rsadtlid={}", placepointid, rsaid, rsadtlid);
+        String requestLogId = "GDYFSA_" + rsaid + rsadtlid;
+        Map<String, Object> r = diagnoseByRequestLogId(requestLogId);
+        r.put("placepointid", placepointid);
+        r.put("rsaid", rsaid);
+        r.put("rsadtlid", rsadtlid);
+        return r;
+    }
+
+    /** 核心:按 (column, value, 可选 placepointid) 查 ALI_HEALTH_SYNC_REQUSET_LOG 全部重试,归因 */
+    private Map<String, Object> runRequestLogDiagnosis(String column, String value, Long placepointid) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("lookupColumn", column);
+        r.put("lookupValue", value);
+
+        // 防 SQL 注入:白名单列名
+        if (!"request_log_id".equals(column) && !"request_id".equals(column)) {
+            r.put("error", "非法的查询列: " + column);
+            return r;
+        }
+
+        StringBuilder sql = new StringBuilder(
+            "SELECT request_log_id, request_id, placepointid, refentid, " +
+            "response_success, created_time, " +
+            "SUBSTR(msg_info, 1, 500) AS msg_info, " +
+            "SUBSTR(response_param, 1, 500) AS response_param, " +
+            "SUBSTR(reqest_param, 1, 500) AS reqest_param " +
+            "FROM ALI_HEALTH_SYNC_REQUSET_LOG " +
+            "WHERE " + column + " = ? ");
+        List<Object> params = new ArrayList<>();
+        params.add(value);
+        if (placepointid != null && placepointid > 0) {
+            sql.append("AND placepointid = ? ");
+            params.add(placepointid);
+        }
+        sql.append("ORDER BY created_time ASC");
+
+        List<Map<String, Object>> rows;
+        try {
+            // 大表(3000w+),用 ROWNUM 限制最多 50 条防 timeout
+            String finalSql = "SELECT * FROM (" + sql + ") WHERE ROWNUM <= 50";
+            rows = jdbc.queryForList(finalSql, params.toArray());
+        } catch (Exception e) {
+            log.error("  [runRequestLogDiagnosis] 查询失败", e);
+            r.put("error", "查询 ALI_HEALTH_SYNC_REQUSET_LOG 失败: " + e.getMessage());
+            return r;
+        }
+
+        r.put("attemptCount", rows.size());
+        r.put("attempts", rows);
+
+        if (rows.isEmpty()) {
+            r.put("verdict", "NO_LOG");
+            r.put("verdictReason", "在 ALI_HEALTH_SYNC_REQUSET_LOG 中没找到任何记录(写入前失败,或 request_log_id 与系统实际生成的不一致)");
+            r.put("suggestion", "检查上游生成 request_log_id 的代码,确认日志写入逻辑(异常分支是否吞掉了 INSERT)");
+            r.put("blocked", true);
+            r.put("blockReason", "无同步请求日志");
+            return r;
+        }
+
+        // 归类 attempts
+        int successCount = 0;
+        int failCount = 0;
+        String firstReqId = null;
+        String firstPlatformAssigned = null;
+        Timestamp firstTime = null;
+        Timestamp lastTime = null;
+        Set<String> requestIds = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            String success = str(row.get("RESPONSE_SUCCESS"));
+            String reqId = str(row.get("REQUEST_ID"));
+            String msg = str(row.get("MSG_INFO"));
+            Timestamp t = toTs(row.get("CREATED_TIME"));
+            if (!reqId.isEmpty()) requestIds.add(reqId);
+            if ("1".equals(success)) successCount++;
+            else if ("0".equals(success)) failCount++;
+            if (firstTime == null) firstTime = t;
+            lastTime = t;
+            // 从 msg_info 抽取 "请更改单据号 XXXXX"
+            String assigned = extractAssignedDocNo(msg);
+            if (assigned != null && firstPlatformAssigned == null) firstPlatformAssigned = assigned;
+        }
+        if (!requestIds.isEmpty()) firstReqId = requestIds.iterator().next();
+
+        r.put("successCount", successCount);
+        r.put("failCount", failCount);
+        r.put("distinctRequestIds", new ArrayList<>(requestIds));
+        r.put("firstAttemptTime", firstTime);
+        r.put("lastAttemptTime", lastTime);
+        if (firstPlatformAssigned != null) {
+            r.put("platformAssignedNewId", firstPlatformAssigned);
+        }
+
+        // 判定根因
+        String verdict;
+        String reason;
+        String suggestion;
+        if (successCount > 0) {
+            // 已经成功过,又来一遍 → 真重复
+            verdict = "REAL_DUPLICATE";
+            reason = "该单据号已有 " + successCount + " 次 response_success='1' 的成功记录,但当前批次又重传了一次,平台因此拒绝";
+            suggestion = "短期:从号段里换一个未用过的单据号(平台建议 " +
+                (firstPlatformAssigned != null ? firstPlatformAssigned : "见 platformAssignedNewId 字段") +
+                ")重试;长期:排查为什么已成功的单据又进了上传队列(去重逻辑有 bug)";
+        } else if (failCount > 1) {
+            verdict = "RETRY_LOOP";
+            reason = "response_success='0' 出现 " + failCount + " 次,说明在反复重传同一单据号但每次都失败";
+            long intervalMs = (lastTime != null && firstTime != null) ? lastTime.getTime() - firstTime.getTime() : -1;
+            if (intervalMs >= 0 && intervalMs < 5 * 60 * 1000L) {
+                reason += "(间隔 " + (intervalMs / 1000) + " 秒,大概率网络/超时重试)";
+                suggestion = "检查重试逻辑:重试前是否重新申请新号,是否带幂等键(requestId)";
+            } else if (intervalMs >= 0) {
+                reason += "(间隔 " + (intervalMs / 1000 / 60) + " 分钟,大概率手工重传或定时任务重复)";
+                suggestion = "检查定时任务/手工重传:重传前要换新单据号,且要做幂等去重";
+            } else {
+                suggestion = "检查重试逻辑和单据号管理";
+            }
+        } else if (failCount == 1) {
+            verdict = "FIRST_FAIL";
+            reason = "只有 1 条失败记录,没有重试历史——这是首次上传就失败";
+            // 检查 msg_info 看平台给的具体原因
+            String msg = str(rows.get(0).get("MSG_INFO"));
+            if (msg.contains("单据号") && msg.contains("重复")) {
+                verdict = "PLATFORM_REJECTED_DOC_NO";
+                reason = "平台以'单据号重复'为由拒绝,但本地日志里没有该单据号的历史成功记录——可能:1) 平台去重逻辑有 bug;2) 该单据号曾被其他门店/企业占用;3) 号段管理异常,POS 端生成的号跟平台记录的号冲突";
+                suggestion = "短期:按平台建议的新号 " + (firstPlatformAssigned != null ? firstPlatformAssigned : "(见 msg)") + " 重试;长期:把号段管理改成'先申请再用',不要本地缓存复用";
+            } else {
+                suggestion = "查看 msg_info 里的具体平台错误,按平台返回的原因修复";
+            }
+        } else {
+            verdict = "UNKNOWN";
+            reason = "无法归类";
+            suggestion = "查看 attempts 中的 msg_info";
+        }
+
+        r.put("verdict", verdict);
+        r.put("verdictReason", reason);
+        r.put("suggestion", suggestion);
+        r.put("blocked", true);
+        r.put("blockReason", "单据号上传重复(verdict=" + verdict + ")");
+        return r;
+    }
+
+    /** 从 msg_info 文本中抽 "请更改单据号 XXXXX" 的新号 */
+    private String extractAssignedDocNo(String msg) {
+        if (msg == null || msg.isEmpty()) return null;
+        int idx = msg.indexOf("请更改单据号");
+        if (idx < 0) {
+            // 平台有时换说法
+            idx = msg.indexOf("更改单据号");
+            if (idx < 0) return null;
+        }
+        String tail = msg.substring(idx);
+        // 截取数字串
+        StringBuilder num = new StringBuilder();
+        for (int i = 0; i < tail.length(); i++) {
+            char c = tail.charAt(i);
+            if (Character.isDigit(c)) num.append(c);
+            else if (num.length() > 0) break;
+        }
+        return num.length() > 0 ? num.toString() : null;
+    }
+
+    private Timestamp toTs(Object v) {
+        if (v == null) return null;
+        if (v instanceof Timestamp) return (Timestamp) v;
+        if (v instanceof java.sql.Date) return new Timestamp(((java.sql.Date) v).getTime());
+        try { return Timestamp.valueOf(v.toString()); } catch (Exception e) { return null; }
     }
 
     /* ==================== 工具 ==================== */
