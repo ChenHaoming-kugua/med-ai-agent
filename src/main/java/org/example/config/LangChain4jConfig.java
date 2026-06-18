@@ -5,6 +5,7 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.time.Duration;
 
@@ -21,6 +22,7 @@ public class LangChain4jConfig {
     private String modelName;
 
     @Bean
+    @Primary
     public ChatLanguageModel chatLanguageModel() {
         return OpenAiChatModel.builder()
                 .apiKey(apiKey)
@@ -33,6 +35,18 @@ public class LangChain4jConfig {
                 .timeout(Duration.ofSeconds(30))
                 .maxTokens(512)
                 .temperature(0.3)
+                .build();
+    }
+
+    @Bean("posGitReviewChatLanguageModel")
+    public ChatLanguageModel posGitReviewChatLanguageModel() {
+        return OpenAiChatModel.builder()
+                .apiKey(apiKey)
+                .baseUrl(baseUrl)
+                .modelName(modelName)
+                .timeout(Duration.ofSeconds(120))
+                .maxTokens(2048)
+                .temperature(0.2)
                 .build();
     }
 }

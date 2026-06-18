@@ -7,10 +7,12 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -33,7 +35,7 @@ public class PosGitReviewService {
         3. 是否影响现有业务路径、定时任务、接口兼容性、UAT 数据。
         4. 是否有明显 bug：空指针、类型转换、金额/数量精度、事务边界、并发风险。
         5. 是否有安全风险：SQL 注入、越权、日志泄密。
-        输出中文 Markdown。必须包含：
+        输出中文 Markdown，不要只输出思考过程，不要把最终报告放在 <think> 标签里。必须包含：
         - 总体结论：可合并 / 建议修改后合并 / 不建议合并
         - 高风险问题（没有就写“无”）
         - 中低风险建议
@@ -43,7 +45,7 @@ public class PosGitReviewService {
 
     private final ChatLanguageModel chatLanguageModel;
 
-    public PosGitReviewService(ChatLanguageModel chatLanguageModel) {
+    public PosGitReviewService(@Qualifier("posGitReviewChatLanguageModel") ChatLanguageModel chatLanguageModel) {
         this.chatLanguageModel = chatLanguageModel;
     }
 
@@ -59,6 +61,11 @@ public class PosGitReviewService {
         result.put("baseRef", base);
 
         try {
+            if (!Files.isDirectory(Path.of(repo))) {
+                result.put("error", "repoPath 目录不存在: " + repo);
+                return result;
+            }
+
             GitResult inside = runGit(repo, List.of("rev-parse", "--is-inside-work-tree"));
             if (inside.exitCode != 0 || !inside.stdout.trim().equals("true")) {
                 result.put("error", "repoPath 不是 git 仓库: " + repo);
@@ -87,7 +94,19 @@ public class PosGitReviewService {
 
             boolean truncated = diff.length() > MAX_DIFF_CHARS;
             String reviewInput = diff.length() > MAX_DIFF_CHARS ? diff.substring(0, MAX_DIFF_CHARS) : diff;
+            log.info("POS review input ready ref={} diffRange={} statChars={} diffChars={} truncated={}",
+                targetRef, diffRange, showStat.length(), diff.length(), truncated);
             String report = callLlm(showStat, diffRange, reviewInput, truncated, requirement);
+            if (blank(report)) {
+                result.put("error", "LLM 返回空 review，请检查模型响应或稍后重试");
+                result.put("diffRange", diffRange);
+                result.put("stat", showStat);
+                result.put("truncated", truncated);
+                result.put("costMs", System.currentTimeMillis() - t0);
+                log.warn("POS review LLM returned blank ref={} diffRange={} diffChars={}", targetRef, diffRange, diff.length());
+                return result;
+            }
+            log.info("POS review LLM returned ref={} reviewChars={}", targetRef, report.length());
 
             result.put("diffRange", diffRange);
             result.put("stat", showStat);
@@ -140,6 +159,8 @@ public class PosGitReviewService {
             ```diff
             %s
             ```
+
+            请直接输出最终中文 Markdown review 报告，不要只输出 <think> 思考过程。
             """.formatted(blank(requirement) ? "用户未提供额外需求背景。" : requirement,
             diffRange, stat, truncated ? "（已截断，请在报告中提示可能需要人工补充查看完整 diff）" : "", diff);
 
@@ -148,7 +169,24 @@ public class PosGitReviewService {
             .build();
         ChatResponse response = chatLanguageModel.chat(request);
         String text = response.aiMessage().text();
-        return text.replaceAll("(?s)<think>.*?</think>", "").trim();
+        String cleaned = cleanLlmText(text);
+        log.info("POS review LLM rawChars={} cleanedChars={}", text == null ? 0 : text.length(), cleaned.length());
+        return cleaned;
+    }
+
+    private String cleanLlmText(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String cleaned = text.replaceAll("(?s)<think>.*?</think>", "").trim();
+        if (!cleaned.isBlank()) {
+            return cleaned;
+        }
+        String think = text.replaceAll("(?s)^.*?<think>", "").replaceAll("(?s)</think>.*$", "").trim();
+        if (!think.isBlank()) {
+            return "## POS Git Review 报告\n\n" + think;
+        }
+        return text.trim();
     }
 
     private GitResult runGit(String repo, List<String> args) throws Exception {

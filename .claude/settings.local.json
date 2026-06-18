@@ -51,7 +51,10 @@
       "Bash(mvn -q -DskipTests compile)",
       "Bash(MAVEN_OPTS=\"-Dfile.encoding=UTF-8\" mvn -q -DskipTests -Dproject.build.sourceEncoding=UTF-8 compile)",
       "Bash(mvn -q -DskipTests clean compile)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(./mvnw *)",
+      "Bash(mvn *)",
+      "Bash(openclaw plugins *)"
     ]
   }
 }
