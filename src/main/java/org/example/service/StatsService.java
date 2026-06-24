@@ -5,8 +5,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 
 @Service
@@ -73,6 +75,62 @@ public class StatsService {
             "全部追溯码采集记录数","码上放心日均上传量_6月",
             "b2b_o2o_库存推送OMS次数","b2b_o2o_库存每次推送OMS数量","b2b_o2o_接单量",
             "三方处方数量","CRM交互量","促销策略数量","含返利促销策略数量");
+    }
+
+    public Map<String, Object> weeklyConsumerDrugPreference(int limit) {
+        int topN = Math.max(1, Math.min(limit, 20));
+        LocalDate today = LocalDate.now();
+        LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate end = today.plusDays(1);
+
+        List<Map<String, Object>> otc = queryWeeklyDrugPreference(1, start, end, topN);
+        List<Map<String, Object>> prescription = queryWeeklyDrugPreference(0, start, end, topN);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("weekStart", start.format(DF));
+        result.put("throughDate", today.format(DF));
+        result.put("metric", "按销售数量统计消费者本周购买偏好");
+        result.put("otcTop", otc.isEmpty() ? null : otc.get(0));
+        result.put("prescriptionTop", prescription.isEmpty() ? null : prescription.get(0));
+        result.put("otcRanking", otc);
+        result.put("prescriptionRanking", prescription);
+        return result;
+    }
+
+    private List<Map<String, Object>> queryWeeklyDrugPreference(int otcFlag, LocalDate start, LocalDate end, int limit) {
+        String prescriptionFilter = otcFlag == 0
+            ? "AND (NVL(d.recipeflag, 0) = 1 OR NVL(d.prescribeflag, 0) = 1 OR d.prescriptiondtlid IS NOT NULL)"
+            : "";
+        String sql = """
+            SELECT * FROM (
+                SELECT d.goodsid AS "goodsId",
+                       g.goodsname AS "goodsName",
+                       CASE WHEN g.otcflag = 1 THEN 'OTC' ELSE '处方药' END AS "drugType",
+                       SUM(d.goodsqty) AS "saleQty",
+                       COUNT(DISTINCT a.rsaid) AS "orderCount",
+                       COUNT(DISTINCT a.placepointid) AS "storeCount",
+                       SUM(d.goodsqty * NVL(NVL(d.useprice, d.unitprice), 0)) AS "saleAmount"
+                  FROM gygdpos.gresa_sa_doc a
+                  JOIN gygdpos.gresa_sa_dtl d ON a.rsaid = d.rsaid
+                  JOIN gygdpos.pub_goods g ON d.goodsid = g.goodsid
+                 WHERE a.usestatus = 1
+                   AND d.usestatus = 1
+                   AND d.goodsqty > 0
+                   AND NVL(d.presentflag, 0) = 0
+                   AND g.usestatus = 1
+                   AND g.medicinetype IS NOT NULL
+                   AND g.otcflag = ?
+                   AND a.useday >= TO_DATE(?, 'YYYY-MM-DD')
+                   AND a.useday <  TO_DATE(?, 'YYYY-MM-DD')
+                   /* prescriptionFilter */
+                   AND EXISTS(SELECT 1 FROM gygdpos.gpcs_placepoint p
+                               WHERE p.placepointid = a.placepointid
+                                 AND p.placepointname NOT LIKE '%'||'测试'||'%')
+                 GROUP BY d.goodsid, g.goodsname, g.otcflag
+                 ORDER BY "saleQty" DESC, "orderCount" DESC, "saleAmount" DESC
+            ) WHERE ROWNUM <= ?
+            """.replace("/* prescriptionFilter */", prescriptionFilter);
+        return jdbc.queryForList(sql, otcFlag, start.format(DF), end.format(DF), limit);
     }
 
     /* ========== 按周拆分：每种子查询 ~1.7s，23 周 ≈ 40s 出结果 ========== */

@@ -41,6 +41,12 @@
         </dependency>
 
         <dependency>
+            <groupId>com.oracle.database.nls</groupId>
+            <artifactId>orai18n</artifactId>
+            <version>21.15.0.0</version>
+        </dependency>
+
+        <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
             <version>0.36.2</version>

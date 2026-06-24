@@ -36,14 +36,42 @@ public class MsfxSyncController {
 
     @PostMapping("/retail-diagnosis-sql")
     public Map<String, Object> retailDiagnosisSql(@RequestBody Map<String, Object> body) {
-        String parentAreaCode = numericOrDefault(body.get("parentAreaCode"), "161");
-        String placepointId = numericOrDefault(body.get("placepointId"), "106016");
-        String rsaid = numericOrBlank(body.get("rsaid"));
-        String businessDate = dateOrBlank(body.get("businessDate"));
-        List<String> screenshotDetailIds = numericList(body.get("screenshotDetailIds"));
-        List<String> realDetailIds = numericList(body.get("realDetailIds"));
-        List<String> traceCodes = numericList(body.get("traceCodes"));
+        return buildRetailDiagnosisSql(
+            numericOrDefault(body.get("parentAreaCode"), "161"),
+            numericOrDefault(body.get("placepointId"), "106016"),
+            numericOrBlank(body.get("rsaid")),
+            dateOrBlank(body.get("businessDate")),
+            numericList(body.get("screenshotDetailIds")),
+            numericList(body.get("realDetailIds")),
+            numericList(body.get("traceCodes")));
+    }
 
+    @GetMapping("/retail-diagnosis-sql")
+    public Map<String, Object> retailDiagnosisSqlGet(
+            @RequestParam(required = false) String parentAreaCode,
+            @RequestParam(required = false) String placepointId,
+            @RequestParam(required = false) String rsaid,
+            @RequestParam(required = false) String businessDate,
+            @RequestParam(required = false) List<String> screenshotDetailIds,
+            @RequestParam(required = false) List<String> realDetailIds,
+            @RequestParam(required = false) List<String> traceCodes) {
+        return buildRetailDiagnosisSql(
+            numericOrDefault(parentAreaCode, "161"),
+            numericOrDefault(placepointId, "106016"),
+            numericOrBlank(rsaid),
+            dateOrBlank(businessDate),
+            numericList(screenshotDetailIds),
+            numericList(realDetailIds),
+            numericList(traceCodes));
+    }
+
+    private static Map<String, Object> buildRetailDiagnosisSql(String parentAreaCode,
+                                                               String placepointId,
+                                                               String rsaid,
+                                                               String businessDate,
+                                                               List<String> screenshotDetailIds,
+                                                               List<String> realDetailIds,
+                                                               List<String> traceCodes) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("parentAreaCode", parentAreaCode);
         result.put("placepointId", placepointId);
@@ -64,6 +92,222 @@ public class MsfxSyncController {
         sql.put("09_abnormal_check", abnormalCheckSql(placepointId, realDetailIds, rsaid, traceCodes));
         result.put("sql", sql);
         return result;
+    }
+
+    /**
+     * 生成"门店哪些追溯码没传码上放心"的可执行 SQL。
+     * 码上放心有两条上传接口（已对齐 medins-databridge-platform 仓内逻辑）：
+     *   1. uploadretail   — 零售单上传，成功写 MSFX.ALI_HEALTH_ECODE_SYNC_D
+     *   2. uploadinoutbill — 出入库单据上传，成功写 MSFX.ALI_HEALTH_PURCH_ECODE_D
+     * 两条链路码源都是 GYGDPOS.BMS_ECODE_RECORD，但 COMEFROM 不同，落表不同，必须分别判定。
+     *
+     * scene 参数：
+     *   - retail  : 只查零售未传（COMEFROM 零售类，落 ALI_HEALTH_ECODE_SYNC_D）
+     *   - inout   : 只查出入库未传（COMEFROM 出入库类，落 ALI_HEALTH_PURCH_ECODE_D）
+     *   - all     : 两者 UNION，任意一条没传都算未传（默认）
+     *
+     * 业务规则（用户要求）：
+     * - "传过" = 对应上传日志表里存在记录，不限 SYNC_FLAG（成功/失败/驳回都算传过）
+     * - "已销售" = ALI_HEALTH_ALREADY_SALE_ECODE 有记录，默认排除（业务红线，仅零售场景适用）
+     * - "平台驳回" = ALI_HEALTH_ABNORMAL_ECODE，默认不排除（驳回=传过，仅零售场景）
+     * - "预校验异常" = ALI_SYNC_ECODE_ABNORMAL_DATA，默认不排除（=传过，仅零售场景）
+     * 出入库场景没有异常/已售表，只看 ALI_HEALTH_PURCH_ECODE_D。
+     */
+    @PostMapping("/unsent-ecode-sql")
+    public Map<String, Object> unsentEcodeSqlPost(@RequestBody(required = false) Map<String, Object> body) {
+        body = body == null ? Map.of() : body;
+        String placepointId = numericOrBlank(body.get("placepointId"));
+        String beginDate = dateOrBlank(body.get("beginDate"));
+        String endDate = dateOrBlank(body.get("endDate"));
+        String scene = strOrDefault(body.get("scene"), "all");
+        boolean excludeAlreadySale = !Boolean.FALSE.equals(body.get("excludeAlreadySale"));
+        boolean excludeAbnormal = Boolean.TRUE.equals(body.get("excludeAbnormal"));
+        boolean excludePrecheckAbnormal = Boolean.TRUE.equals(body.get("excludePrecheckAbnormal"));
+        return buildUnsentEcodeSql(placepointId, beginDate, endDate, scene,
+            excludeAlreadySale, excludeAbnormal, excludePrecheckAbnormal);
+    }
+
+    @GetMapping("/unsent-ecode-sql")
+    public Map<String, Object> unsentEcodeSqlGet(
+            @RequestParam(required = false) String placepointId,
+            @RequestParam(required = false) String beginDate,
+            @RequestParam(required = false) String endDate,
+            @RequestParam(defaultValue = "all") String scene,
+            @RequestParam(defaultValue = "true") boolean excludeAlreadySale,
+            @RequestParam(defaultValue = "false") boolean excludeAbnormal,
+            @RequestParam(defaultValue = "false") boolean excludePrecheckAbnormal) {
+        return buildUnsentEcodeSql(
+            numericOrBlank(placepointId),
+            dateOrBlank(beginDate),
+            dateOrBlank(endDate),
+            scene,
+            excludeAlreadySale, excludeAbnormal, excludePrecheckAbnormal);
+    }
+
+    private static Map<String, Object> buildUnsentEcodeSql(String placepointId, String beginDate, String endDate,
+                                                            String scene,
+                                                            boolean excludeAlreadySale,
+                                                            boolean excludeAbnormal,
+                                                            boolean excludePrecheckAbnormal) {
+        int days = beginDate.isEmpty() || endDate.isEmpty() ? 7 : 0;
+        String normalizedScene = switch (scene == null ? "all" : scene.toLowerCase().trim()) {
+            case "retail", "1" -> "retail";
+            case "inout", "2" -> "inout";
+            default -> "all";
+        };
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("placepointId", placepointId);
+        result.put("beginDate", beginDate);
+        result.put("endDate", endDate);
+        result.put("scene", normalizedScene);
+        result.put("excludeAlreadySale", excludeAlreadySale);
+        result.put("excludeAbnormal", excludeAbnormal);
+        result.put("excludePrecheckAbnormal", excludePrecheckAbnormal);
+        result.put("rule", "传过就算上传（不限 SYNC_FLAG），驳回也算上传；默认只排除已销售码（仅零售）");
+
+        result.put("sql", unsentEcodeSql(placepointId, beginDate, endDate, days, normalizedScene,
+            excludeAlreadySale, excludeAbnormal, excludePrecheckAbnormal));
+        result.put("scenes", Map.of(
+            "retail", "零售单上传 (uploadretail)，落 ALI_HEALTH_ECODE_SYNC_D，COMEFROM ∈ 270003/970002/730010/270013/255140",
+            "inout", "出入库单据上传 (uploadinoutbill)，落 ALI_HEALTH_PURCH_ECODE_D，COMEFROM ∈ 260001/260003/260008/260034/260014/260016/260006/2561223",
+            "all", "零售 + 出入库 UNION，任意一条没传都算未传"
+        ));
+        result.put("tables", Map.of(
+            "采集记录", "GYGDPOS.BMS_ECODE_RECORD (零售+出入库共用)",
+            "零售上传日志", "MSFX.ALI_HEALTH_ECODE_SYNC_D (不限 SYNC_FLAG，有记录=传过)",
+            "出入库上传日志", "MSFX.ALI_HEALTH_PURCH_ECODE_D (不限 SYNC_FLAG，有记录=传过)",
+            "已售出码", "MSFX.ALI_HEALTH_ALREADY_SALE_ECODE (仅零售，默认排除)",
+            "平台驳回", "MSFX.ALI_HEALTH_ABNORMAL_ECODE (仅零售，默认不排除)",
+            "预校验异常", "MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA (仅零售，默认不排除)",
+            "门店同步", "GYGDPOS.ALI_HEALTH_SYNC_STORE_D",
+            "商品主数据", "GYGDPOS.PUB_GOODS"
+        ));
+        return result;
+    }
+
+    /** 零售 COMEFROM: 270003 零售退货 / 970002 前台开票 / 730010 中药开方 / 270013 订单销售 / 255140 慢病审方 */
+    private static final String RETAIL_COMEFROM = "('270003','970002','730010','270013','255140')";
+    /** 出入库 COMEFROM: 260001 配送收货 / 260003 直配收货 / 260008 配送调拨管理 / 260034 配送调拨确认 / 260014 报损 / 260016 报溢 / 260006 配送退货 / 2561223 配送退货含越库 */
+    private static final String INOUT_COMEFROM = "('260001','260003','260008','260034','260014','260016','260006','2561223')";
+
+    private static String unsentEcodeSql(String placepointId, String beginDate, String endDate, int days,
+                                         String scene,
+                                         boolean excludeAlreadySale,
+                                         boolean excludeAbnormal,
+                                         boolean excludePrecheckAbnormal) {
+        String datePredicate;
+        if (!beginDate.isEmpty() && !endDate.isEmpty()) {
+            datePredicate = "  AND r.CREDATE >= TO_DATE('" + beginDate + "', 'YYYY-MM-DD')\n"
+                + "  AND r.CREDATE <  TO_DATE('" + endDate + "', 'YYYY-MM-DD') + 1\n";
+        } else {
+            datePredicate = "  AND r.CREDATE >= TRUNC(SYSDATE) - " + days + "\n"
+                + "  AND r.CREDATE <  SYSDATE\n";
+        }
+
+        boolean includeRetail = scene.equals("retail") || scene.equals("all");
+        boolean includeInout = scene.equals("inout") || scene.equals("all");
+        StringBuilder sb = new StringBuilder();
+        boolean unionNeeded = false;
+
+        if (includeRetail) {
+            sb.append(retailUnsentSql(placepointId, datePredicate, excludeAlreadySale, excludeAbnormal, excludePrecheckAbnormal));
+            unionNeeded = true;
+        }
+        if (includeInout) {
+            if (unionNeeded) {
+                sb.append("\nUNION ALL\n");
+            }
+            sb.append(inoutUnsentSql(placepointId, datePredicate));
+        }
+        sb.append("\nORDER BY \"门店ID\", \"采集时间\" DESC");
+        return sb.toString();
+    }
+
+    private static String retailUnsentSql(String placepointId, String datePredicate,
+                                          boolean excludeAlreadySale, boolean excludeAbnormal, boolean excludePrecheckAbnormal) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("SELECT\n");
+        sb.append("  r.PLACEPOINTID        AS \"门店ID\",\n");
+        sb.append("  s.PLACEPOINTNAME      AS \"门店名\",\n");
+        sb.append("  r.ECODE               AS \"追溯码\",\n");
+        sb.append("  r.GOODSID             AS \"商品ID\",\n");
+        sb.append("  g.GOODSNAME           AS \"商品名\",\n");
+        sb.append("  r.LOTNO               AS \"批号\",\n");
+        sb.append("  r.GOODSQTY            AS \"数量\",\n");
+        sb.append("  r.COMEFROM            AS \"业务来源\",\n");
+        sb.append("  r.SOURCEID            AS \"单据明细ID\",\n");
+        sb.append("  r.RSAID               AS \"销售单ID\",\n");
+        sb.append("  'retail'              AS \"场景\",\n");
+        sb.append("  TO_CHAR(r.CREDATE, 'YYYY-MM-DD HH24:MI:SS') AS \"采集时间\"\n");
+        sb.append("FROM GYGDPOS.BMS_ECODE_RECORD r\n");
+        sb.append("LEFT JOIN MSFX.ALI_HEALTH_ECODE_SYNC_D u\n");
+        sb.append("  ON u.PLACEPOINTID = r.PLACEPOINTID\n");
+        sb.append(" AND u.TRACE_CODE   = r.ECODE\n");
+        sb.append("LEFT JOIN GYGDPOS.ALI_HEALTH_SYNC_STORE_D s\n");
+        sb.append("  ON s.PLACEPOINTID = r.PLACEPOINTID AND s.USESTATUS = 1\n");
+        sb.append("LEFT JOIN GYGDPOS.PUB_GOODS g\n");
+        sb.append("  ON g.GOODSID = r.GOODSID\n");
+        sb.append("WHERE u.TRACE_CODE IS NULL\n");
+        sb.append("  AND r.COMEFROM IN ").append(RETAIL_COMEFROM).append('\n');
+        if (excludeAlreadySale) {
+            sb.append("  AND NOT EXISTS (SELECT 1 FROM MSFX.ALI_HEALTH_ALREADY_SALE_ECODE a\n");
+            sb.append("                   WHERE a.TRACECODE = r.ECODE AND a.PLACEPOINTID = r.PLACEPOINTID)\n");
+        }
+        if (excludeAbnormal) {
+            sb.append("  AND NOT EXISTS (SELECT 1 FROM MSFX.ALI_HEALTH_ABNORMAL_ECODE a\n");
+            sb.append("                   WHERE a.TRACECODE = r.ECODE AND a.PLACEPOINTID = r.PLACEPOINTID)\n");
+        }
+        if (excludePrecheckAbnormal) {
+            sb.append("  AND NOT EXISTS (SELECT 1 FROM MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA a\n");
+            sb.append("                   WHERE a.PLACEPOINTID = r.PLACEPOINTID\n");
+            sb.append("                     AND a.RSADTLID = TO_CHAR(r.SOURCEID))\n");
+        }
+        sb.append(datePredicate);
+        if (!placepointId.isEmpty()) {
+            sb.append("  AND r.PLACEPOINTID = ").append(placepointId).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String inoutUnsentSql(String placepointId, String datePredicate) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("SELECT\n");
+        sb.append("  r.PLACEPOINTID        AS \"门店ID\",\n");
+        sb.append("  s.PLACEPOINTNAME      AS \"门店名\",\n");
+        sb.append("  r.ECODE               AS \"追溯码\",\n");
+        sb.append("  r.GOODSID             AS \"商品ID\",\n");
+        sb.append("  g.GOODSNAME           AS \"商品名\",\n");
+        sb.append("  r.LOTNO               AS \"批号\",\n");
+        sb.append("  r.GOODSQTY            AS \"数量\",\n");
+        sb.append("  r.COMEFROM            AS \"业务来源\",\n");
+        sb.append("  r.SOURCEID            AS \"出入库单据ID\",\n");
+        sb.append("  NULL                  AS \"销售单ID\",\n");
+        sb.append("  'inout'               AS \"场景\",\n");
+        sb.append("  TO_CHAR(r.CREDATE, 'YYYY-MM-DD HH24:MI:SS') AS \"采集时间\"\n");
+        sb.append("FROM GYGDPOS.BMS_ECODE_RECORD r\n");
+        sb.append("LEFT JOIN MSFX.ALI_HEALTH_PURCH_ECODE_D p\n");
+        sb.append("  ON p.PLACEPOINTID = r.PLACEPOINTID\n");
+        sb.append(" AND p.COMEFROM     = r.COMEFROM\n");
+        sb.append(" AND p.SOURCEID     = r.SOURCEID\n");
+        sb.append(" AND p.GOODS_ID     = r.GOODSID\n");
+        sb.append(" AND p.TRACE_CODE   = r.ECODE\n");
+        sb.append("LEFT JOIN GYGDPOS.ALI_HEALTH_SYNC_STORE_D s\n");
+        sb.append("  ON s.PLACEPOINTID = r.PLACEPOINTID AND s.USESTATUS = 1\n");
+        sb.append("LEFT JOIN GYGDPOS.PUB_GOODS g\n");
+        sb.append("  ON g.GOODSID = r.GOODSID\n");
+        sb.append("WHERE p.TRACE_CODE IS NULL\n");
+        sb.append("  AND r.COMEFROM IN ").append(INOUT_COMEFROM).append('\n');
+        sb.append(datePredicate);
+        if (!placepointId.isEmpty()) {
+            sb.append("  AND r.PLACEPOINTID = ").append(placepointId).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String strOrDefault(Object value, String defaultValue) {
+        String s = value == null ? "" : value.toString().trim();
+        return s.isEmpty() ? defaultValue : s;
     }
 
     private static String groupBuyMappingSql(List<String> screenshotDetailIds, List<String> realDetailIds) {
@@ -237,15 +481,14 @@ public class MsfxSyncController {
         List<String> out = new ArrayList<>();
         if (value instanceof Iterable<?>) {
             for (Object item : (Iterable<?>) value) {
+                out.addAll(numericList(item));
+            }
+        } else if (value != null) {
+            for (String item : value.toString().split(",")) {
                 String s = numericOrBlank(item);
                 if (!s.isEmpty()) {
                     out.add(s);
                 }
-            }
-        } else {
-            String s = numericOrBlank(value);
-            if (!s.isEmpty()) {
-                out.add(s);
             }
         }
         return out;

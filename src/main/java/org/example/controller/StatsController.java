@@ -54,6 +54,11 @@ public class StatsController {
         return StatsService.metricKeys();
     }
 
+    @GetMapping(value = "/weekly-drug-preference", produces = "application/json;charset=UTF-8")
+    public Map<String, Object> weeklyDrugPreference(@RequestParam(defaultValue = "10") int limit) {
+        return statsService.weeklyConsumerDrugPreference(limit);
+    }
+
     /** 手动触发预计算（医保等慢查询指标） */
     @PostMapping("/refresh")
     public Map<String, String> refresh(

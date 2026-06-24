@@ -54,7 +54,21 @@
       "Bash(xargs grep *)",
       "Bash(./mvnw *)",
       "Bash(mvn *)",
-      "Bash(openclaw plugins *)"
+      "Bash(openclaw plugins *)",
+      "Bash(javac -encoding UTF-8 -cp \"temp_jdbc/ojdbc8-21.15.0.0.jar\" \"temp_jdbc/DrugSchemaProbe.java\")",
+      "Bash(javac -encoding UTF-8 -cp \"temp_jdbc/ojdbc8-21.15.0.0.jar\" \"temp_jdbc/WeeklyDrugPreferenceProbe.java\")",
+      "Bash(export JAVA_HOME=\"C:/Users/haoming/.jdks/openjdk-26.0.1\")",
+      "Bash(export PATH=\"C:/Users/haoming/.jdks/openjdk-26.0.1/bin:$PATH\")",
+      "Bash(\"C:/Users/haoming/.jdks/openjdk-26.0.1/bin/java\" -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" org.example.Main --server.port=18081)",
+      "Bash(javac -encoding UTF-8 -cp \"temp_jdbc/ojdbc8-21.15.0.0.jar\" \"temp_jdbc/BmsEcodeProbe.java\")",
+      "Bash(javac -encoding UTF-8 -cp \"temp_jdbc/ojdbc8-21.15.0.0.jar\" \"temp_jdbc/UnsentEcodeSqlProbe.java\")",
+      "Bash(javac -encoding UTF-8 -cp \"temp_jdbc/ojdbc8-21.15.0.0.jar\" \"temp_jdbc/UseStatusProbe.java\")",
+      "WebFetch(domain:10.44.0.228)",
+      "Bash(javac -encoding UTF-8 -cp \"temp_jdbc/ojdbc8-21.15.0.0.jar\" \"temp_jdbc/PurchEcodeProbe.java\")",
+      "Bash(\"C:/Users/haoming/.jdks/openjdk-26.0.1/bin/java\" -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" org.example.Main --server.port=18082)",
+      "Bash(python -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\(data['scene']\\); print\\(data['rule']\\); print\\('PURCH' in data['sql'], 'ECODE_SYNC_D' in data['sql'], 'UNION ALL' in data['sql']\\); print\\(data['sql'][:1200]\\)\")",
+      "Bash(python *)",
+      "Bash(PYTHONIOENCODING=utf-8 python *)"
     ]
   }
 }
