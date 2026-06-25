@@ -180,7 +180,7 @@ public class EcodeDiagnosticService {
     private Map<String, Object> checkPurchEcode(long placepointid, long sourceId, String goodsid) {
         try {
             List<Map<String, Object>> list = jdbc.queryForList(
-                "SELECT 1 FROM ALI_HEALTH_PURCH_ECODE_D " +
+                "SELECT 1 FROM MSFX.ALI_HEALTH_PURCH_ECODE_D " +
                 "WHERE placepointid = ? AND sourceid = ? AND goods_id = ? AND ROWNUM <= 1",
                 placepointid, sourceId, goodsid);
             boolean exists = !list.isEmpty();
@@ -325,10 +325,10 @@ public class EcodeDiagnosticService {
         r.put("beginTime", beginTime);
         r.put("endTime", endTime);
 
-        // 查找该门店在时间段内所有应上传但未上传的明细
         String sql =
-            "SELECT gsl.rsadtlid, gsl.rsaid, gsl.goodsid, g.goodsname, " +
-            "gso.credate, gso.placepointid, gp.placepointname " +
+            "WITH candidates AS (" +
+            "SELECT DISTINCT gsl.rsadtlid, gsl.rsaid, gsl.goodsid, g.goodsname, " +
+            "gso.credate, gso.placepointid, gp.placepointname, 1 strongcontrol, 0 spececode " +
             "FROM gygdpos.gresa_sa_dtl gsl " +
             "INNER JOIN gygdpos.gresa_sa_doc gso ON gsl.rsaid = gso.rsaid " +
             "INNER JOIN gygdpos.pub_goods g ON gsl.goodsid = g.goodsid AND g.usestatus = 1 " +
@@ -340,31 +340,63 @@ public class EcodeDiagnosticService {
             "AND gso.credate >= TO_DATE(?, 'YYYY-MM-DD') " +
             "AND gso.credate < TO_DATE(?, 'YYYY-MM-DD') + 1 " +
             "AND ga.area = syns.parent_area_code " +
+            "AND (EXISTS( " +
+            "SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_AREA_GOODS_QUALITY b ON a.dtlid = b.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 AND b.strongcontrol = 1) " +
+            "OR EXISTS( " +
+            "SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_POINT_GOODS_QUALITY c ON a.dtlid = c.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 " +
+            "AND c.placepointid IN (gso.placepointid, syns.parent_area_code) AND c.strongcontrol = 1))" +
+            "AND NOT EXISTS(SELECT 1 FROM gygdpos.special_ecode_goods t2 " +
+            "WHERE t2.goodsid = gsl.goodsid AND t2.ecodetype IN (2,3,4,5,6)) " +
+            "AND EXISTS( " +
+            "SELECT 1 FROM gygdpos.BMS_ECODE_RECORD e0 " +
+            "WHERE e0.placepointid = gso.placepointid " +
+            "AND e0.goodsid = gsl.goodsid " +
+            "AND (e0.sourceid = gsl.rsadtlid OR EXISTS(SELECT 1 FROM gygdpos.ZX_GROUP_BUY_DTL d0 " +
+            "WHERE d0.rsadtlid = gsl.rsadtlid AND d0.groupbuydtlid = e0.sourceid))) " +
             "AND NOT EXISTS( " +
-            "SELECT 1 FROM ALI_HEALTH_ECODE_SYNC_D l " +
+            "SELECT 1 FROM MSFX.ALI_HEALTH_ECODE_SYNC_D l " +
             "WHERE l.area_code = syns.area_code " +
             "AND l.placepointid = gso.placepointid " +
             "AND l.rsaid = gsl.rsaid " +
             "AND l.rsadtlid = gsl.rsadtlid " +
             "AND l.goods_id = gsl.goodsid) " +
             "AND NOT EXISTS( " +
-            "SELECT 1 FROM ALI_HEALTH_ALREADY_SALE_ECODE m " +
+            "SELECT 1 FROM MSFX.ALI_HEALTH_ALREADY_SALE_ECODE m " +
             "WHERE m.placepointid = gso.placepointid " +
             "AND m.rsadtlid = gsl.rsadtlid " +
             "AND m.goods_id = gsl.goodsid) " +
             "AND NOT EXISTS( " +
-            "SELECT 1 FROM ALI_HEALTH_ABNORMAL_ECODE q " +
+            "SELECT 1 FROM MSFX.ALI_HEALTH_ABNORMAL_ECODE q " +
             "WHERE q.placepointid = gso.placepointid " +
             "AND q.rsadtlid = gsl.rsadtlid " +
             "AND q.goods_id = gsl.goodsid) " +
             "AND NOT EXISTS( " +
-            "SELECT 1 FROM ALI_SYNC_ECODE_ABNORMAL_DATA n " +
+            "SELECT 1 FROM MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA n " +
             "WHERE n.area_code = syns.area_code " +
             "AND n.placepointid = gso.placepointid " +
             "AND n.rsaid = gsl.rsaid " +
             "AND n.rsadtlid = gsl.rsadtlid " +
             "AND n.goods_id = gsl.goodsid) " +
-            "AND ROWNUM <= 200";
+            "AND ROWNUM <= 200), " +
+            "ecode_match AS (" +
+            "SELECT c.rsadtlid, COUNT(e.ecode) ecode_count, MIN(e.ecode) trace_code " +
+            "FROM candidates c " +
+            "LEFT JOIN gygdpos.bms_ecode_record e ON e.placepointid = c.placepointid " +
+            "AND e.goodsid = c.goodsid " +
+            "AND (e.sourceid = c.rsadtlid OR EXISTS(SELECT 1 FROM gygdpos.ZX_GROUP_BUY_DTL d " +
+            "WHERE d.rsadtlid = c.rsadtlid AND d.groupbuydtlid = e.sourceid)) " +
+            "GROUP BY c.rsadtlid) " +
+            "SELECT c.rsadtlid, c.rsaid, c.goodsid, c.goodsname, c.credate, c.placepointid, c.placepointname, " +
+            "c.strongcontrol, c.spececode, NVL(e.ecode_count, 0) ecode_count, e.trace_code " +
+            "FROM candidates c " +
+            "LEFT JOIN ecode_match e ON e.rsadtlid = c.rsadtlid " +
+            "ORDER BY c.credate DESC";
 
         List<Map<String, Object>> unsent;
         try {
@@ -382,44 +414,95 @@ public class EcodeDiagnosticService {
             return r;
         }
 
-        // 对每条未上传记录做 BMS_ECODE_RECORD 检查（这是最常见的失败原因）
+        // 批量查 REQUSET_LOG，区分"未触发"和"触发但失败"
+        Map<String, Map<String, Object>> syncLogMap = Collections.emptyMap();
+        List<String> logIds = new ArrayList<>();
+        for (Map<String, Object> row : unsent) {
+            long ecodeCount = toLong(row.get("ECODE_COUNT"));
+            if (ecodeCount > 0) {
+                logIds.add("GDYFSA_" + str(row.get("RSAID")) + str(row.get("RSADTLID")));
+            }
+        }
+        if (!logIds.isEmpty()) {
+            try {
+                StringBuilder inClause = new StringBuilder();
+                for (int i = 0; i < logIds.size(); i++) {
+                    if (i > 0) inClause.append(",");
+                    inClause.append("?");
+                }
+                List<Map<String, Object>> logRows = jdbc.queryForList(
+                    "SELECT request_log_id, response_success, created_time " +
+                    "FROM MSFX.ALI_HEALTH_SYNC_REQUSET_LOG " +
+                    "WHERE request_log_id IN (" + inClause + ")",
+                    logIds.toArray());
+                syncLogMap = new LinkedHashMap<>();
+                for (Map<String, Object> lr : logRows) {
+                    syncLogMap.put(str(lr.get("REQUEST_LOG_ID")), lr);
+                }
+                log.info("  [diagnoseBatch] REQUSET_LOG 批量查询: 查 {} 个, 命中 {}", logIds.size(), syncLogMap.size());
+            } catch (Exception e) {
+                log.warn("  [diagnoseBatch] REQUSET_LOG 批量查询失败: {}", e.getMessage());
+            }
+        }
+
         List<Map<String, Object>> reasons = new ArrayList<>();
         int noEcodeRecord = 0;
         int hasEcodeButNotUploaded = 0;
+        int alreadySyncedFalsePositive = 0;
 
         for (Map<String, Object> row : unsent) {
-            long ppid = toLong(row.get("PLACEPOINTID"));
-            long rsadtlid = toLong(row.get("RSADTLID"));
-            long goodsid = toLong(row.get("GOODSID"));
-            String goodsname = str(row.get("GOODSNAME"));
-            String rsaidStr = str(row.get("RSAID"));
-
-            // 只查 BMS_ECODE_RECORD（最关键的检查）
-            Map<String, Object> ecodeCheck = checkEcodeRecord(ppid, goodsid, String.valueOf(rsadtlid));
-
+            long ecodeCount = toLong(row.get("ECODE_COUNT"));
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("rsadtlid", rsadtlid);
-            item.put("rsaid", rsaidStr);
-            item.put("goodsid", goodsid);
-            item.put("goodsname", goodsname);
+            item.put("rsadtlid", toLong(row.get("RSADTLID")));
+            item.put("rsaid", str(row.get("RSAID")));
+            item.put("goodsid", toLong(row.get("GOODSID")));
+            item.put("goodsname", str(row.get("GOODSNAME")));
+            item.put("traceCode", str(row.get("TRACE_CODE")));
+            item.put("strongControl", toLong(row.get("STRONGCONTROL")));
+            item.put("specialEcode", toLong(row.get("SPECECODE")));
+            item.put("ecodeCount", ecodeCount);
             item.put("credate", row.get("CREDATE"));
-            if (isPass(ecodeCheck)) {
-                item.put("reason", "追溯码采集记录存在但未上传，需进一步排查(可能是强控品/特殊追溯码/上游系统未触发同步)");
-                hasEcodeButNotUploaded++;
+            if (ecodeCount > 0) {
+                String logId = "GDYFSA_" + str(row.get("RSAID")) + str(row.get("RSADTLID"));
+                Map<String, Object> logEntry = syncLogMap.get(logId);
+                item.put("requestLogId", logId);
+                if (logEntry != null) {
+                    String successFlag = str(logEntry.get("RESPONSE_SUCCESS"));
+                    if ("1".equals(successFlag)) {
+                        item.put("reason", "已上传成功(REQUSET_LOG有成功记录，UI延迟/SYNC_D写入延迟，非真实未上传)");
+                        alreadySyncedFalsePositive++;
+                        item.put("syncTriggered", true);
+                        item.put("syncSuccess", true);
+                    } else {
+                        item.put("reason", "已触发上传但接口返回失败: response_success=0，需排查接口层(msg_info)");
+                        hasEcodeButNotUploaded++;
+                        item.put("syncTriggered", true);
+                        item.put("syncSuccess", false);
+                    }
+                } else {
+                    item.put("reason", "调度层未触发: 无同步请求日志，同步调度程序未扫描/未触发该单据，需排查scheduler或强控品同步通道");
+                    hasEcodeButNotUploaded++;
+                    item.put("syncTriggered", false);
+                    item.put("syncSuccess", false);
+                }
             } else {
                 item.put("reason", "无追溯码采集记录(BMS_ECODE_RECORD)，零售时未扫码或扫码数据未入库");
                 noEcodeRecord++;
             }
-            item.put("ecodeRecord", ecodeCheck);
             reasons.add(item);
         }
 
         r.put("noEcodeRecord", noEcodeRecord);
         r.put("hasEcodeButNotUploaded", hasEcodeButNotUploaded);
+        r.put("alreadySyncedFalsePositive", alreadySyncedFalsePositive);
         r.put("details", reasons);
         r.put("summary", String.format(
-            "共 %d 条未上传: %d 条无追溯码采集记录(需检查扫码环节), %d 条有采集记录但未上传(需进一步排查)",
-            unsent.size(), noEcodeRecord, hasEcodeButNotUploaded));
+            "共 %d 条: %d 条已上传(假阳性/UI延迟), %d 条真实未上传(%d 条未触发+%d 条已触发但失败需看REQUSET_LOG), %d 条无采集记录(需检查扫码环节)",
+            unsent.size(), alreadySyncedFalsePositive,
+            hasEcodeButNotUploaded,
+            reasons.stream().filter(it -> Boolean.FALSE.equals(it.get("syncTriggered"))).count(),
+            reasons.stream().filter(it -> Boolean.TRUE.equals(it.get("syncTriggered")) && Boolean.FALSE.equals(it.get("syncSuccess"))).count(),
+            noEcodeRecord));
 
         return r;
     }
@@ -439,9 +522,9 @@ public class EcodeDiagnosticService {
             "AND gso.credate < TO_DATE(?, 'YYYY-MM-DD') + 1",
             placepointid, beginTime, endTime);
 
-        // 其中已启用ecode的商品明细数
+        // 原上传链路候选明细数：启用追溯码、强控=1、特殊追溯码=0、已采集追溯码
         long ecodeGoodsDetail = q(
-            "SELECT COUNT(*) FROM gygdpos.gresa_sa_dtl gsl " +
+            "SELECT COUNT(DISTINCT gsl.rsadtlid) FROM gygdpos.gresa_sa_dtl gsl " +
             "INNER JOIN gygdpos.gresa_sa_doc gso ON gsl.rsaid = gso.rsaid " +
             "INNER JOIN gygdpos.pub_goods_area ga ON gsl.goodsid = ga.goodsid AND ga.isecode = 1 " +
             "INNER JOIN gygdpos.ali_health_sync_store_d syns ON syns.placepointid = gso.placepointid AND syns.usestatus = 1 " +
@@ -449,36 +532,82 @@ public class EcodeDiagnosticService {
             "AND gso.placepointid = ? " +
             "AND gso.credate >= TO_DATE(?, 'YYYY-MM-DD') " +
             "AND gso.credate < TO_DATE(?, 'YYYY-MM-DD') + 1 " +
-            "AND ga.area = syns.parent_area_code",
+            "AND ga.area = syns.parent_area_code " +
+            "AND (EXISTS(SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_AREA_GOODS_QUALITY b ON a.dtlid = b.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 AND b.strongcontrol = 1) " +
+            "OR EXISTS(SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_POINT_GOODS_QUALITY c ON a.dtlid = c.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 " +
+            "AND c.placepointid IN (gso.placepointid, syns.parent_area_code) AND c.strongcontrol = 1))" +
+            "AND NOT EXISTS(SELECT 1 FROM gygdpos.special_ecode_goods t2 " +
+            "WHERE t2.goodsid = gsl.goodsid AND t2.ecodetype IN (2,3,4,5,6)) " +
+            "AND EXISTS(SELECT 1 FROM gygdpos.BMS_ECODE_RECORD e0 " +
+            "WHERE e0.placepointid = gso.placepointid AND e0.goodsid = gsl.goodsid " +
+            "AND (e0.sourceid = gsl.rsadtlid OR EXISTS(SELECT 1 FROM gygdpos.ZX_GROUP_BUY_DTL d0 " +
+            "WHERE d0.rsadtlid = gsl.rsadtlid AND d0.groupbuydtlid = e0.sourceid)))",
             placepointid, beginTime, endTime);
 
-        // 已成功上传的明细数
-        long syncedCount = q(
-            "SELECT COUNT(*) FROM ALI_HEALTH_ECODE_SYNC_D e " +
-            "WHERE e.placepointid = ? " +
-            "AND e.create_time >= TO_DATE(?, 'YYYY-MM-DD') " +
-            "AND e.create_time < TO_DATE(?, 'YYYY-MM-DD') + 1",
-            placepointid, beginTime, endTime);
+        long syncedCount;
 
         // 异常记录数 (ALI_HEALTH_ABNORMAL_ECODE 无时间字段，按门店查全量)
         long abnormalCount = q(
-            "SELECT COUNT(*) FROM ALI_HEALTH_ABNORMAL_ECODE " +
+            "SELECT COUNT(*) FROM MSFX.ALI_HEALTH_ABNORMAL_ECODE " +
             "WHERE placepointid = ?",
             placepointid);
 
         // 已售出记录数 (无时间字段，按门店查全量)
         long alreadySaleCount = q(
-            "SELECT COUNT(*) FROM ALI_HEALTH_ALREADY_SALE_ECODE " +
+            "SELECT COUNT(*) FROM MSFX.ALI_HEALTH_ALREADY_SALE_ECODE " +
             "WHERE placepointid = ?",
             placepointid);
 
         // 数据不全记录数 (无时间字段，按门店查全量)
         long abnormalDataCount = q(
-            "SELECT COUNT(*) FROM ALI_SYNC_ECODE_ABNORMAL_DATA " +
+            "SELECT COUNT(*) FROM MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA " +
             "WHERE placepointid = ?",
             placepointid);
 
-        // BMS_ECODE_RECORD 有记录但未在任何目标表里的（漏网之鱼）
+        long unsentDetailCount = q(
+            "SELECT COUNT(DISTINCT gsl.rsadtlid) " +
+            "FROM gygdpos.gresa_sa_dtl gsl " +
+            "INNER JOIN gygdpos.gresa_sa_doc gso ON gsl.rsaid = gso.rsaid " +
+            "INNER JOIN gygdpos.pub_goods_area ga ON gsl.goodsid = ga.goodsid AND ga.isecode = 1 " +
+            "INNER JOIN gygdpos.ali_health_sync_store_d syns ON syns.placepointid = gso.placepointid AND syns.usestatus = 1 " +
+            "WHERE gso.usestatus = 1 AND gsl.usestatus = 1 " +
+            "AND gso.placepointid = ? " +
+            "AND gso.credate >= TO_DATE(?, 'YYYY-MM-DD') " +
+            "AND gso.credate < TO_DATE(?, 'YYYY-MM-DD') + 1 " +
+            "AND ga.area = syns.parent_area_code " +
+            "AND (EXISTS(SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_AREA_GOODS_QUALITY b ON a.dtlid = b.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 AND b.strongcontrol = 1) " +
+            "OR EXISTS(SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_POINT_GOODS_QUALITY c ON a.dtlid = c.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 " +
+            "AND c.placepointid IN (gso.placepointid, syns.parent_area_code) AND c.strongcontrol = 1))" +
+            "AND NOT EXISTS(SELECT 1 FROM gygdpos.special_ecode_goods t2 " +
+            "WHERE t2.goodsid = gsl.goodsid AND t2.ecodetype IN (2,3,4,5,6)) " +
+            "AND EXISTS(SELECT 1 FROM gygdpos.BMS_ECODE_RECORD e0 " +
+            "WHERE e0.placepointid = gso.placepointid AND e0.goodsid = gsl.goodsid " +
+            "AND (e0.sourceid = gsl.rsadtlid OR EXISTS(SELECT 1 FROM gygdpos.ZX_GROUP_BUY_DTL d0 " +
+            "WHERE d0.rsadtlid = gsl.rsadtlid AND d0.groupbuydtlid = e0.sourceid))) " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_HEALTH_ECODE_SYNC_D l " +
+            "WHERE l.area_code = syns.area_code AND l.placepointid = gso.placepointid " +
+            "AND l.rsaid = gsl.rsaid AND l.rsadtlid = gsl.rsadtlid AND l.goods_id = gsl.goodsid) " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_HEALTH_ALREADY_SALE_ECODE m " +
+            "WHERE m.placepointid = gso.placepointid AND m.rsadtlid = gsl.rsadtlid AND m.goods_id = gsl.goodsid) " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_HEALTH_ABNORMAL_ECODE q " +
+            "WHERE q.placepointid = gso.placepointid AND q.rsadtlid = gsl.rsadtlid AND q.goods_id = gsl.goodsid) " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA n " +
+            "WHERE n.area_code = syns.area_code AND n.placepointid = gso.placepointid " +
+            "AND n.rsaid = gsl.rsaid AND n.rsadtlid = gsl.rsadtlid AND n.goods_id = gsl.goodsid)",
+            placepointid, beginTime, endTime);
+
         long missedCount = q(
             "SELECT COUNT(DISTINCT gsl.rsadtlid) " +
             "FROM gygdpos.gresa_sa_dtl gsl " +
@@ -490,24 +619,34 @@ public class EcodeDiagnosticService {
             "AND gso.credate >= TO_DATE(?, 'YYYY-MM-DD') " +
             "AND gso.credate < TO_DATE(?, 'YYYY-MM-DD') + 1 " +
             "AND ga.area = syns.parent_area_code " +
-            "AND EXISTS( " +
-            "SELECT 1 FROM gygdpos.BMS_ECODE_RECORD g " +
-            "WHERE g.placepointid = gso.placepointid " +
-            "AND g.goodsid = gsl.goodsid " +
-            "AND (g.sourceid = gsl.rsadtlid " +
-            "OR EXISTS(SELECT 1 FROM gygdpos.ZX_GROUP_BUY_DTL d " +
+            "AND (EXISTS(SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_AREA_GOODS_QUALITY b ON a.dtlid = b.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 AND b.strongcontrol = 1) " +
+            "OR EXISTS(SELECT 1 FROM gygdpos.ZX_PUB_GOODS_AREA_DTL a " +
+            "JOIN gygdpos.ZX_POINT_GOODS_QUALITY c ON a.dtlid = c.dtlid " +
+            "WHERE a.goodsid = gsl.goodsid AND a.area = syns.parent_area_code " +
+            "AND NVL(a.usestatus, 0) = 1 AND a.qualityid = 9 " +
+            "AND c.placepointid IN (gso.placepointid, syns.parent_area_code) AND c.strongcontrol = 1))" +
+            "AND NOT EXISTS(SELECT 1 FROM gygdpos.special_ecode_goods t2 " +
+            "WHERE t2.goodsid = gsl.goodsid AND t2.ecodetype IN (2,3,4,5,6)) " +
+            "AND EXISTS(SELECT 1 FROM gygdpos.BMS_ECODE_RECORD g " +
+            "WHERE g.placepointid = gso.placepointid AND g.goodsid = gsl.goodsid " +
+            "AND (g.sourceid = gsl.rsadtlid OR EXISTS(SELECT 1 FROM gygdpos.ZX_GROUP_BUY_DTL d " +
             "WHERE d.rsadtlid = gsl.rsadtlid AND d.groupbuydtlid = g.sourceid))) " +
-            "AND NOT EXISTS(SELECT 1 FROM ALI_HEALTH_ECODE_SYNC_D l " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_HEALTH_ECODE_SYNC_D l " +
             "WHERE l.placepointid = gso.placepointid AND l.rsaid = gsl.rsaid " +
             "AND l.rsadtlid = gsl.rsadtlid AND l.goods_id = gsl.goodsid) " +
-            "AND NOT EXISTS(SELECT 1 FROM ALI_HEALTH_ALREADY_SALE_ECODE m " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_HEALTH_ALREADY_SALE_ECODE m " +
             "WHERE m.placepointid = gso.placepointid AND m.rsadtlid = gsl.rsadtlid AND m.goods_id = gsl.goodsid) " +
-            "AND NOT EXISTS(SELECT 1 FROM ALI_HEALTH_ABNORMAL_ECODE q " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_HEALTH_ABNORMAL_ECODE q " +
             "WHERE q.placepointid = gso.placepointid AND q.rsadtlid = gsl.rsadtlid AND q.goods_id = gsl.goodsid) " +
-            "AND NOT EXISTS(SELECT 1 FROM ALI_SYNC_ECODE_ABNORMAL_DATA n " +
+            "AND NOT EXISTS(SELECT 1 FROM MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA n " +
             "WHERE n.placepointid = gso.placepointid AND n.rsaid = gsl.rsaid " +
             "AND n.rsadtlid = gsl.rsadtlid AND n.goods_id = gsl.goodsid)",
             placepointid, beginTime, endTime);
+
+        syncedCount = Math.max(0, ecodeGoodsDetail - unsentDetailCount);
 
         r.put("placepointid", placepointid);
         r.put("timeRange", beginTime + " ~ " + endTime);
@@ -517,6 +656,7 @@ public class EcodeDiagnosticService {
         r.put("abnormalCount", abnormalCount);
         r.put("alreadySaleCount", alreadySaleCount);
         r.put("abnormalDataCount", abnormalDataCount);
+        r.put("unsentDetailCount", unsentDetailCount);
         r.put("missedCount", missedCount);
         r.put("uploadRate", ecodeGoodsDetail > 0
             ? String.format("%.1f%%", 100.0 * syncedCount / ecodeGoodsDetail)
@@ -640,7 +780,7 @@ public class EcodeDiagnosticService {
     private Map<String, Object> checkAlreadySynced(long placepointid, String rsaid, String rsadtlid, String goodsid) {
         try {
             List<Map<String, Object>> list = jdbc.queryForList(
-                "SELECT 1 FROM ALI_HEALTH_ECODE_SYNC_D " +
+                "SELECT 1 FROM MSFX.ALI_HEALTH_ECODE_SYNC_D " +
                 "WHERE placepointid = ? AND rsaid = ? AND rsadtlid = ? AND goods_id = ? AND ROWNUM <= 1",
                 placepointid, rsaid, rsadtlid, goodsid);
             boolean exists = !list.isEmpty();
@@ -657,7 +797,7 @@ public class EcodeDiagnosticService {
     private Map<String, Object> checkAlreadySale(long placepointid, String rsadtlid, String goodsid) {
         try {
             List<Map<String, Object>> list = jdbc.queryForList(
-                "SELECT 1 FROM ALI_HEALTH_ALREADY_SALE_ECODE " +
+                "SELECT 1 FROM MSFX.ALI_HEALTH_ALREADY_SALE_ECODE " +
                 "WHERE placepointid = ? AND rsadtlid = ? AND goods_id = ? AND ROWNUM <= 1",
                 placepointid, rsadtlid, goodsid);
             boolean exists = !list.isEmpty();
@@ -673,7 +813,7 @@ public class EcodeDiagnosticService {
     private Map<String, Object> checkAbnormal(long placepointid, String rsadtlid, String goodsid) {
         try {
             List<Map<String, Object>> list = jdbc.queryForList(
-                "SELECT abnormal_type, abnormal_desc FROM ALI_HEALTH_ABNORMAL_ECODE " +
+                "SELECT abnormal_type, abnormal_desc FROM MSFX.ALI_HEALTH_ABNORMAL_ECODE " +
                 "WHERE placepointid = ? AND rsadtlid = ? AND goods_id = ? AND ROWNUM <= 1",
                 placepointid, rsadtlid, goodsid);
             boolean exists = !list.isEmpty();
@@ -697,7 +837,7 @@ public class EcodeDiagnosticService {
     private Map<String, Object> checkAbnormalData(long placepointid, String rsaid, String rsadtlid, String goodsid) {
         try {
             List<Map<String, Object>> list = jdbc.queryForList(
-                "SELECT ext_msg_reason FROM ALI_SYNC_ECODE_ABNORMAL_DATA " +
+                "SELECT ext_msg_reason FROM MSFX.ALI_SYNC_ECODE_ABNORMAL_DATA " +
                 "WHERE placepointid = ? AND rsaid = ? AND rsadtlid = ? AND goods_id = ? AND ROWNUM <= 1",
                 placepointid, rsaid, rsadtlid, goodsid);
             boolean exists = !list.isEmpty();
@@ -753,7 +893,7 @@ public class EcodeDiagnosticService {
             String exactId = "GDYFSA_" + rsaid + rsadtlid;
             List<Map<String, Object>> list = jdbc.queryForList(
                 "SELECT request_log_id, created_time, response_success " +
-                "FROM ALI_HEALTH_SYNC_REQUSET_LOG " +
+                "FROM MSFX.ALI_HEALTH_SYNC_REQUSET_LOG " +
                 "WHERE request_log_id = ? AND ROWNUM <= 1",
                 exactId);
             boolean exists = !list.isEmpty();
@@ -779,7 +919,7 @@ public class EcodeDiagnosticService {
         try {
             List<Map<String, Object>> list = jdbc.queryForList(
                 "SELECT request_log_id, created_time, response_success " +
-                "FROM ALI_HEALTH_SYNC_REQUSET_LOG " +
+                "FROM MSFX.ALI_HEALTH_SYNC_REQUSET_LOG " +
                 "WHERE request_log_id LIKE ? AND ROWNUM <= 3",
                 prefix + "%");
             boolean exists = !list.isEmpty();
@@ -863,7 +1003,7 @@ public class EcodeDiagnosticService {
             "SUBSTR(msg_info, 1, 500) AS msg_info, " +
             "SUBSTR(response_param, 1, 500) AS response_param, " +
             "SUBSTR(reqest_param, 1, 500) AS reqest_param " +
-            "FROM ALI_HEALTH_SYNC_REQUSET_LOG " +
+            "FROM MSFX.ALI_HEALTH_SYNC_REQUSET_LOG " +
             "WHERE " + column + " = ? ");
         List<Object> params = new ArrayList<>();
         params.add(value);

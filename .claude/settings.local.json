@@ -68,7 +68,13 @@
       "Bash(\"C:/Users/haoming/.jdks/openjdk-26.0.1/bin/java\" -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" org.example.Main --server.port=18082)",
       "Bash(python -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\(data['scene']\\); print\\(data['rule']\\); print\\('PURCH' in data['sql'], 'ECODE_SYNC_D' in data['sql'], 'UNION ALL' in data['sql']\\); print\\(data['sql'][:1200]\\)\")",
       "Bash(python *)",
-      "Bash(PYTHONIOENCODING=utf-8 python *)"
+      "Bash(PYTHONIOENCODING=utf-8 python *)",
+      "Bash(mkdir -p \"C:/Users/haoming/.openclaw/agents/main/agent/codex-home/skills/ecode-diagnose\")",
+      "Bash(cp \"C:/Users/haoming/IdeaProjects/openclaw/extensions/ecode-diagnose/skills/ecode-diagnose/SKILL.md\" \"C:/Users/haoming/.openclaw/agents/main/agent/codex-home/skills/ecode-diagnose/SKILL.md\")",
+      "Bash(javac -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" -d target/classes -sourcepath src/main/java src/main/java/org/example/service/EcodeDiagnosticService.java)",
+      "Bash(javac -encoding UTF-8 -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" -d target/classes -sourcepath src/main/java src/main/java/org/example/service/EcodeDiagnosticService.java)",
+      "Bash(\"C:/Users/haoming/.jdks/openjdk-26.0.1/bin/javac\" -encoding UTF-8 -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" -d target/classes -sourcepath src/main/java src/main/java/org/example/service/EcodeDiagnosticService.java)",
+      "Bash(\"C:/Users/haoming/.jdks/openjdk-26.0.1/bin/javac\" --release 21 -encoding UTF-8 -cp \"target/classes;$\\(tr -d '\\\\r' < target/classpath.txt\\)\" -d target/classes -sourcepath src/main/java src/main/java/org/example/service/EcodeDiagnosticService.java)"
     ]
   }
 }
